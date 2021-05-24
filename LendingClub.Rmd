@@ -1,0 +1,160 @@
+---
+title: "Lending Club"
+author: "Prashan A. Welipitiya"
+date: "3/14/2021"
+output: pdf_document
+---
+In this project we use the LendingClub data from 2012 to 2014 to predict the loan status classification of an individual based on certain predictors. 
+
+After getting the data the predictors we use are annual income, fico score range, funded amount, last payment, interest rate and average current balance. We will run logistic regression, decision trees and random forest. Knn was not an option due to the size of data. 
+
+
+```{r}
+library(pacman)
+p_load(tidyverse, tidymodels, lubridate, janitor, rpart, rpart.plot, C50)
+```
+
+```{r}
+data <- read.csv("data/lending_club_data_2012_2014.csv")
+```
+
+```{r}
+ls <- data %>%
+  dplyr::select(-id, -member_id, -url) %>%
+  dplyr::select(loan_status, annual_inc,fico_range_low, fico_range_high, funded_amnt, last_pymnt_amnt, int_rate,avg_cur_bal) %>%
+  drop_na(loan_status) %>%
+  dplyr::filter(loan_status=="Charged Off"|loan_status=="Fully Paid") %>%
+  remove_empty(which = c("rows", "cols"), quiet = TRUE)
+```
+
+```{r}
+head(ls)
+```
+
+```{r}
+split <- initial_split(ls, prop = 0.75)
+
+ls_recipe <- training(split) %>%
+  recipe(loan_status ~ .) %>%
+  step_nzv(all_predictors()) %>%
+  step_medianimpute(all_numeric()) %>%
+  step_center(all_numeric(), -all_outcomes()) %>%
+  step_scale(all_numeric(), -all_outcomes()) %>%
+  prep()
+```
+
+```{r}
+testing <- ls_recipe %>%
+  bake(testing(split)) 
+
+training <- juice(ls_recipe)
+```
+
+```{r}
+samp <- sample_n(training, size = 62000, replace = FALSE)
+```
+
+
+## Fitting Models
+
+### Null Model
+
+```{r}
+mod_null <- glm(loan_status ~ 1,data=training, family=binomial)
+
+```
+
+### Decision Tree
+
+```{r}
+mod_tree <- rpart(loan_status ~ ., data = training)
+rpart.plot(mod_tree)
+p.rpart <- predict(mod_tree, testing)
+summary(p.rpart)
+summary(as.numeric(testing$loan_status))
+cor(p.rpart, as.numeric(testing$loan_status))
+```
+
+### Random Forest
+
+```{r}
+mod_rf <- rand_forest(trees = 100) %>%
+  set_engine("randomForest") %>%
+  set_mode("classification") %>%
+  fit(loan_status ~ ., data = training)
+```
+
+### Logistic Regression
+
+```{r}
+mod_glm <- logistic_reg() %>%
+  set_engine("glm") %>%
+  set_mode("classification") %>%
+  fit(loan_status ~ ., data = training)
+```
+
+## Evaluations
+
+```{r}
+mod_glm %>%
+  predict(testing) %>%
+  bind_cols(testing) %>%
+  metrics(truth = loan_status, estimate = .pred_class)
+```
+
+```{r}
+mod_rf %>%
+  predict(testing) %>%
+  bind_cols(testing) %>%
+  metrics(truth = loan_status, estimate = .pred_class)
+```
+
+```{r}
+mod_tree %>%
+  predict(testing, type = "class") %>%
+  bind_cols(testing) %>%
+  metrics(truth = loan_status, estimate = ...1)
+```
+
+
+## Improvements 
+
+```{r}
+mod_glm2 <- glm(loan_status ~ ., data = training, family = binomial)
+summary(mod_glm2)
+```
+
+```{r}
+mod_glm2 <- logistic_reg(penalty = 0.001, mixture = 0.5) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification") %>%
+  fit(loan_status ~ annual_inc + funded_amnt + last_pymnt_amnt + int_rate + avg_cur_bal, data = training)
+
+mod_glm2 %>%
+  predict(testing) %>%
+  bind_cols(testing) %>%
+  metrics(truth = loan_status, estimate = .pred_class)
+```
+
+```{r}
+mod_rf2 <- rand_forest(trees = 100) %>%
+  set_engine("ranger") %>%
+  set_mode("classification") %>%
+  fit(loan_status ~ annual_inc + funded_amnt + last_pymnt_amnt + int_rate + avg_cur_bal, data = training)
+
+mod_rf2 %>%
+  predict(testing) %>%
+  bind_cols(testing) %>%
+  metrics(truth = loan_status, estimate = .pred_class)
+```
+
+```{r}
+mod_tree2 <- C5.0(loan_status ~ annual_inc + funded_amnt + last_pymnt_amnt + int_rate + avg_cur_bal, data = training)
+
+mod_tree2 %>%
+  predict(testing, type = "class") %>%
+  bind_cols(testing) %>%
+  metrics(truth = loan_status, estimate = ...1)
+```
+
+We found that random forest was the effective model in classifying Loan status with an accuracy of 88.75. Decision tree with C5.0 was highly effective also. 
